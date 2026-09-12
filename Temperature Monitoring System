@@ -1,0 +1,167 @@
+/*
+ * File:   temperature_.c
+ * Author: Admin
+ *
+ * Created on 12 September, 2026, 8:40 PM
+ */
+
+#include <xc.h>
+#include <stdio.h>
+
+#define _XTAL_FREQ 20000000
+
+// CONFIG
+#pragma config FOSC = HS
+#pragma config WDTE = OFF
+#pragma config PWRTE = OFF
+#pragma config BOREN = OFF
+#pragma config LVP = OFF
+#pragma config CPD = OFF
+#pragma config WRT = OFF
+#pragma config CP = OFF
+
+
+// ---------- UART ----------
+void UART_Init()
+{
+    TRISC6 = 0;
+    TRISC7 = 1;
+
+    SPBRG = 129;          // 9600 baud @ 20MHz
+    TXSTA = 0x24;
+    RCSTA = 0x90;
+}
+
+void UART_Send(char data)
+{
+    while(TXIF == 0);
+    TXREG = data;
+}
+
+void UART_String(char *str)
+{
+    while(*str)
+    {
+        UART_Send(*str);
+        str++;
+    }
+}
+
+
+// ---------- ADC ----------
+void ADC_Init()
+{
+    ADCON0 = 0x41;        // ADC ON, Channel 0
+    ADCON1 = 0x80;        // Right justified
+}
+
+unsigned int ADC_Read()
+{
+    __delay_us(20);
+
+    GO_nDONE = 1;
+
+    while(GO_nDONE);
+
+    return ((ADRESH << 8) | ADRESL);
+}
+
+
+// ---------- SPI ----------
+void SPI_Init()
+{
+    TRISC3 = 0;           // SCK
+    TRISC4 = 1;           // SDI
+    TRISC5 = 0;           // SDO
+
+    SSPSTAT = 0x40;
+    SSPCON = 0x21;
+}
+
+void SPI_Write(unsigned char data)
+{
+    SSPBUF = data;
+
+    while(!SSPIF);
+
+    SSPIF = 0;
+}
+
+
+// ---------- I2C ----------
+void I2C_Init()
+{
+    TRISC3 = 1;
+    TRISC4 = 1;
+
+    SSPSTAT = 0x80;
+    SSPCON = 0x28;
+
+    SSPADD = 49;          // 100 kHz @ 20MHz
+}
+
+void I2C_Start()
+{
+    SEN = 1;
+    while(SEN);
+}
+
+void I2C_Stop()
+{
+    PEN = 1;
+    while(PEN);
+}
+
+void I2C_Write(unsigned char data)
+{
+    SSPBUF = data;
+    while(SSPIF == 0);
+    SSPIF = 0;
+}
+
+
+// ---------- MAIN ----------
+void main()
+{
+    unsigned int adc_value;
+    unsigned int temperature;
+    char text[30];
+
+    ADC_Init();
+    UART_Init();
+    SPI_Init();
+    I2C_Init();
+
+    UART_String("LM35 Temperature Monitoring\r\n");
+
+    while(1)
+    {
+        // Read LM35
+        adc_value = ADC_Read();
+
+        // LM35 = 10mV / degree Celsius
+        // ADC reference = 5V
+        temperature = (adc_value * 500) / 1023;
+
+        // UART OUTPUT
+        sprintf(text, "Temperature = %d C\r\n", temperature);
+        UART_String(text);
+
+
+        // SPI OUTPUT
+        SPI_Write(temperature);
+
+
+        // I2C OUTPUT
+        I2C_Start();
+
+        // Change 0x40 according to your I2C slave/display address
+        I2C_Write(0x40 << 1);
+
+        I2C_Write(temperature);
+
+        I2C_Stop();
+
+        __delay_ms(1000);
+    }
+}
